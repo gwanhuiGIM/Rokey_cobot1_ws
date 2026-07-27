@@ -1,0 +1,130 @@
+# ============================================================
+#  M0609 : 자연 지점(Natural Point) 물체 가속도 역산 측정
+# ============================================================
+#  목적 :
+#    쟁반 위 물체가 외부 플랫폼(AGV/차량)의 가속으로 인해 받는
+#    "수평 관성력"을 M0609 6축 F/T 센서로 읽어,
+#    물체가 실제로 겪는 가속도 a 를 역산한다.
+#
+#        F = m * a      ->      a = F / m
+#
+#  전제 :
+#    - 쟁반은 로봇 TCP(플랜지)에 고정, 물체는 쟁반 중앙에 놓임
+#    - Tool Weight / TCP 는 "쟁반만" 기준으로 미리 설정해 둘 것
+#      (물체 무게는 아래 measure_object_mass()에서 자동 측정)
+#    - M0609 는 FTS 탑재 모델이므로 get_tool_force() 사용 가능
+#
+#  참고(Programming Manual V2.12) :
+#    - get_tool_force(ref)          p.181  [Fx,Fy,Fz,Mx,My,Mz]
+#    - set_external_force_reset()   p.265  외력 센서 tare
+#    - get_workpiece_weight()       p.237  (질량 측정 대안)
+# ============================================================
+
+import math
+
+# ---------------- 사용자 튜닝 파라미터 ----------------
+G           = 9.81      # 중력가속도 [m/s^2]
+SETTLE_TIME = 2.0       # 모션 종료 후 진동 안정화 대기 [s]
+LOOP_HZ     = 100       # 측정 루프 주파수 [Hz]
+LPF_ALPHA   = 0.2       # 저역통과 필터 계수(0~1). 작을수록 부드럽고 느림
+DEADBAND_N  = 0.3       # 이 이하 크기의 힘은 센서 노이즈로 간주 [N]
+# ------------------------------------------------------
+
+# 자연 지점(중립 자세) : 쟁반이 수평이 되는 관절각.
+# 현장에서 직접교시로 잡은 값으로 교체할 것.
+NATURAL_POSE = posj(0.0, 0.0, 90.0, 0.0, 90.0, 0.0)
+
+
+def measure_object_mass():
+    """
+    정지 상태에서 물체 질량을 Z축 외력으로부터 측정.
+    (Tool Weight 에 '쟁반만' 설정돼 있어야 물체 무게가 Fz 로 잡힘)
+
+    반환 : 추정 질량 [kg]
+    """
+    # BASE 좌표계 기준 툴 외력 [Fx, Fy, Fz, Mx, My, Mz]
+    force = get_tool_force(DR_BASE)
+    fz    = force[2]            # 수직 성분 = 물체 무게 반작용
+    mass  = abs(fz) / G         # m = |Fz| / g
+    return mass
+
+    # [대안] 두산 내장 무게 측정기를 쓰려면 위 대신 :
+    #   reset_workpiece_weight()          # 잔류 오차 제거
+    #   mass = get_workpiece_weight()     # kg 단위 반환
+    #   return mass
+
+
+def estimate_acceleration_loop(m):
+    """
+    tare 이후, 동적 관성력을 읽어 가속도를 역산하는 실시간 루프.
+
+    m : measure_object_mass() 로 측정한 물체 질량 [kg]
+    """
+    dt   = 1.0 / LOOP_HZ
+    ax_f = 0.0     # 필터링된 X 가속도
+    ay_f = 0.0     # 필터링된 Y 가속도
+
+    print("---- start acceleration estimation ----")
+
+    while True:
+        # 1) 현재 툴 외력 읽기 (BASE 좌표계)
+        #    tare 되어 있으므로 정지 시 ~0, 가속 시 관성력만 남음
+        f  = get_tool_force(DR_BASE)
+        fx = f[0]       # 전/후 방향 힘
+        fy = f[1]       # 좌/우 방향 힘
+
+        # 2) 데드밴드 : 미세 잔떨림 제거
+        if abs(fx) < DEADBAND_N:
+            fx = 0.0
+        if abs(fy) < DEADBAND_N:
+            fy = 0.0
+
+        # 3) 관성력 -> 가속도 역산 (a = F / m)
+        #    부호(방향)는 반작용이므로 현장 캘리브레이션으로 확정할 것.
+        #    필요 시 아래에 -1 을 곱해 방향을 맞춘다.
+        ax = fx / m
+        ay = fy / m
+
+        # 4) 저역통과 필터(EMA)로 스무딩 -> sloshing/노이즈 억제
+        ax_f = LPF_ALPHA * ax + (1.0 - LPF_ALPHA) * ax_f
+        ay_f = LPF_ALPHA * ay + (1.0 - LPF_ALPHA) * ay_f
+
+        # 5) 합성 가속도 크기
+        a_mag = math.sqrt(ax_f * ax_f + ay_f * ay_f)
+
+        # 6) 출력 (이후 여기서 자세보정 로직으로 연결)
+        print("a=(% .3f, % .3f) m/s^2 | |a|=% .3f | Fxy=(% .2f, % .2f) N"
+              % (ax_f, ay_f, a_mag, fx, fy))
+
+        wait(dt)
+
+
+def main():
+    # --- 1) 자연 지점으로 이동 ---
+    set_velj(30.0)
+    set_accj(60.0)
+    movej(NATURAL_POSE)
+
+    # --- 2) 안정화 후 물체 질량 측정 ---
+    wait(SETTLE_TIME)
+    m = measure_object_mass()
+    print("Measured object mass = %.4f kg" % m)
+
+    # 물체가 없거나 측정 이상 시 안전 종료
+    if m < 0.01:
+        print("[WARN] object not detected (m too small). abort.")
+        return
+
+    # --- 3) 기준선 tare (질량 측정 '이후'에 수행!) ---
+    #     정지 상태 외력을 offset 으로 잡아 0 으로 만든다.
+    #     주의 : 접촉/외력이 없는 안정 상태에서 호출해야 정확.
+    wait(SETTLE_TIME)
+    set_external_force_reset(1)     # mode=1 : 현재 외력을 offset 으로 설정
+    wait(0.5)
+
+    # --- 4) 실시간 가속도 역산 루프 시작 ---
+    estimate_acceleration_loop(m)
+
+
+if __name__ == "__main__":
+    main()

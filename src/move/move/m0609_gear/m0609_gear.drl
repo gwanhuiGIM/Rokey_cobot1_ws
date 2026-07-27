@@ -1,0 +1,148 @@
+## Title : m0609_gear
+## Time : 2026-07-20 14:51:10
+
+
+def gripper_off():
+    global System_left_down
+    global System_top
+    global System_goal_top
+    global System_goal
+    global System_T1
+    global System_T3
+    global System_T2
+    global System_T0
+    global System_T3_dst
+    global System_T2_dst
+    global System_T1_dst
+    global System_T0_dst
+    # SetNode
+    set_digital_output(1,OFF)
+    # SetNode
+    set_digital_output(2,ON)
+    # WaitNode
+    wait(0.50)
+    
+_alias_sub_name_gripper_off = gripper_off
+
+def gripper_on():
+    global System_left_down
+    global System_top
+    global System_goal_top
+    global System_goal
+    global System_T1
+    global System_T3
+    global System_T2
+    global System_T0
+    global System_T3_dst
+    global System_T2_dst
+    global System_T1_dst
+    global System_T0_dst
+    # SetNode
+    set_digital_output(1,ON)
+    # SetNode
+    set_digital_output(2,OFF)
+    # WaitNode
+    wait(0.50)
+    
+_alias_sub_name_gripper_on = gripper_on
+
+set_singular_handling(DR_AVOID)
+set_velj(60.0)
+set_accj(100.0)
+set_velx(250.0, 80.625, DR_OFF)
+set_accx(1000.0, 322.5)
+gLoop145110548 = 0
+while gLoop145110548 < 1:
+    # CallNode
+    _alias_sub_name_gripper_off()
+    # MoveJNode
+    movej(posj(-25.31, 25.28, 68.30, -1.98, 79.07, -9.51), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveLNode
+    movel(System_T3, radius=0.00, ref=0, mod=DR_MV_MOD_ABS, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # CallNode
+    _alias_sub_name_gripper_on()
+    # MoveLNode
+    movel(posx(0.00, 0.00, 150.00, 0.00, 0.00, 0.00), radius=0.00, ref=0, mod=DR_MV_MOD_REL, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # MoveJNode
+    movej(posj(-10.08, 3.25, 95.71, -4.23, 78.75, -9.51), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveLNode
+    movel(System_T3_dst, radius=0.00, ref=0, mod=DR_MV_MOD_ABS, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # CallNode
+    _alias_sub_name_gripper_off()
+    # CommentNode
+    tp_log("T3끝")
+    # MoveJNode
+    movej(posj(-13.51, 8.20, 93.67, -2.40, 78.66, -14.21), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveJNode
+    movej(posj(-16.24, 26.94, 66.66, -1.22, 85.91, -14.21), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveLNode
+    movel(System_T1, radius=0.00, ref=0, mod=DR_MV_MOD_ABS, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # CallNode
+    _alias_sub_name_gripper_on()
+    # MoveLNode
+    movel(posx(0.00, 0.00, 150.00, 0.00, 0.00, 0.00), radius=0.00, ref=0, mod=DR_MV_MOD_REL, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # MoveJNode
+    movej(posj(-3.07, 0.98, 101.29, 1.20, 78.34, -14.21), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveLNode
+    movel(System_T1_dst, radius=0.00, ref=0, mod=DR_MV_MOD_ABS, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # CallNode
+    _alias_sub_name_gripper_off()
+    # CommentNode
+    tp_log("T1 끝")
+    # MoveJNode
+    movej(posj(-3.07, 0.98, 101.29, 1.20, 78.34, -14.21), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveJNode
+    movej(posj(-25.24, 17.03, 83.23, 1.10, 80.81, -36.35), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveLNode
+    movel(System_T2, radius=0.00, ref=0, mod=DR_MV_MOD_ABS, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # CallNode
+    _alias_sub_name_gripper_on()
+    # MoveLNode
+    movel(posx(0.00, 0.00, 150.00, 0.00, 0.00, 0.00), radius=0.00, ref=0, mod=DR_MV_MOD_REL, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # MoveJNode
+    movej(posj(-18.67, -6.18, 108.24, 1.15, 78.97, -29.85), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveLNode
+    movel(System_T2_dst, radius=0.00, ref=0, mod=DR_MV_MOD_ABS, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # CallNode
+    _alias_sub_name_gripper_off()
+    # CommentNode
+    tp_log("T2 끝")
+    # MoveJNode
+    movej(posj(-17.34, -7.85, 108.01, 0.34, 79.73, -16.27), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveJNode
+    movej(posj(-23.18, 24.37, 70.91, 0.58, 84.70, -22.04), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # MoveLNode
+    movel(System_T0, radius=0.00, ref=0, mod=DR_MV_MOD_ABS, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # CallNode
+    _alias_sub_name_gripper_on()
+    # MoveLNode
+    movel(posx(0.00, 0.00, 150.00, 0.00, 0.00, 0.00), radius=0.00, ref=0, mod=DR_MV_MOD_REL, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # MoveJNode
+    movej(posj(-11.67, -0.90, 101.69, 0.58, 79.15, -10.60), radius=0.00, ra=DR_MV_RA_DUPLICATE)
+    # CommentNode
+    tp_log("왔다갔다 시작")
+    # MoveLNode
+    movel(System_T0_dst, radius=0.00, ref=0, mod=DR_MV_MOD_ABS, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+    # SetNode
+    set_ref_coord(1)
+    # ComplianceNode
+    task_compliance_ctrl()
+    set_stiffnessx([3000.00, 3000.00, 3000.00, 200.00, 200.00, 200.00],time=0.0)
+    # ForceNode
+    set_desired_force([0.00, 0.00, 25.00, 0.00, 0.00, 0.00],[0,0,1,0,0,0],time=0.0,mod=DR_FC_MOD_REL)
+    # MovePeriodicNode
+    amove_periodic(amp=[0.00, 0.00, 0.00, 0.00, 0.00, 10.00], period=[0.00, 0.00, 0.00, 0.00, 0.00, 1.50], atime=0.00, repeat=5, ref=1)
+    # RepeatNode
+    while True:
+        if check_position_condition(axis = DR_AXIS_Z,  max=35, ref=DR_BASE):
+            stop(DR_QSTOP)
+            _alias_sub_name_gripper_off()
+            release_force(time=0.0)
+            release_compliance_ctrl()
+            movel(posx(0.00, 0.00, 150.00, 0.00, 0.00, 0.00), radius=0.00, ref=0, mod=DR_MV_MOD_REL, ra=DR_MV_RA_DUPLICATE, app_type=DR_MV_APP_NONE)
+            break
+            
+        else:
+            pass
+        
+    gLoop145110548 = gLoop145110548 + 1

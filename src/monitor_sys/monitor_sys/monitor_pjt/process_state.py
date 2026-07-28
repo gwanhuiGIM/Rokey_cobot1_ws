@@ -1,7 +1,7 @@
 # =============================================================
 # process_state.py — 핸드드립 커피 공정 상태머신 정의 + 보고 메시지 규약
 # -------------------------------------------------------------
-# 실행: 라이브러리 (자체 점검: python3 -m rokey.monitor_pjt.process_state --selftest)
+# 실행: 라이브러리 (자체 점검: python3 -m monitor_sys.monitor_pjt.process_state --selftest)
 # 토픽: /coffee_process/state — std_msgs/String (JSON 1줄)
 #       QoS: RELIABLE / TRANSIENT_LOCAL / depth 10
 #       -> 모니터를 나중에 켜도 마지막 상태를 바로 받는다

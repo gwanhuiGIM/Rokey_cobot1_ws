@@ -1,8 +1,8 @@
 # =============================================================
 # monitor.launch.py — 시스템 모니터 노드 + Qt 대시보드를 각각 직접 실행
 # -------------------------------------------------------------
-# 실행: ros2 launch monitor_pjt monitor.launch.py
-#       ros2 launch monitor_pjt monitor.launch.py control_enabled:=true
+# 실행: ros2 launch monitor_sys monitor.launch.py
+#       ros2 launch monitor_sys monitor.launch.py control_enabled:=true
 # 전제: 로봇 드라이버가 이미 떠 있어야 데이터가 들어온다.
 #   ros2 launch dsr_bringup2 dsr_bringup2_rviz.launch.py \
 #       mode:=real host:=192.168.137.100 model:=m0609 name:=dsr01
@@ -27,7 +27,7 @@ def generate_launch_description():
         # 기본 false = 읽기 전용. true로 켜도 GUI의 "제어 활성화" 체크는 별도로 눌러야 함.
         DeclareLaunchArgument("control_enabled", default_value="false"),
         Node(
-            package="rokey",
+            package="monitor_sys",
             executable="system_monitor",
             name="system_monitor",
             output="screen",
@@ -37,7 +37,7 @@ def generate_launch_description():
             }],
         ),
         Node(
-            package="rokey",
+            package="monitor_sys",
             executable="dashboard",
             name="monitor_dashboard",
             output="screen",

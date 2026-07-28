@@ -38,8 +38,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import String
 
-from rokey.monitor_pjt import process_state as ps
-from rokey.monitor_pjt.snapshot import Snapshot
+from monitor_sys.monitor_pjt import process_state as ps
+from monitor_sys.monitor_pjt.snapshot import Snapshot
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QPainter, QPen

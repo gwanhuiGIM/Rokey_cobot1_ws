@@ -1,9 +1,9 @@
 # =============================================================
 # system_monitor.py — M0609 시스템 모니터 노드 (GUI와는 완전히 다른 프로세스)
 # -------------------------------------------------------------
-# 실행: ros2 run monitor_pjt system_monitor
-#       ros2 launch monitor_pjt monitor.launch.py   (dashboard와 함께 기동)
-#       (자체 점검: python3 -m rokey.monitor_pjt.system_monitor --selftest — 로봇 불필요)
+# 실행: ros2 run monitor_sys system_monitor
+#       ros2 launch monitor_sys web_admin.launch.py   (웹 관리자 UI와 함께 기동)
+#       (자체 점검: python3 -m monitor_pjt.system_monitor --selftest — 로봇 불필요)
 # 노드: /system_monitor  (실제로 dsr_msgs2/DRL 토픽·서비스를 만지는 유일한 노드)
 #   구독: /dsr01/joint_states(JointState), /dsr01/error(RobotError),
 #         /dsr01/robot_disconnection, /dsr01/io/ctrl_box_digital_input_state,
@@ -62,11 +62,21 @@ from dsr_msgs2.srv import (
     GetCurrentPosx,
     GetCurrentVelx,
     MoveStop,
+    MoveLine,
+    MoveJoint,
     Jog,
 )
 
-from rokey.monitor_pjt import process_state as ps
-from rokey.monitor_pjt.snapshot import Snapshot
+try:
+    from monitor_sys.monitor_pjt import process_state as ps
+    from monitor_sys.monitor_pjt.snapshot import Snapshot
+except ImportError:  # 소스 파일 직접 실행 호환
+    try:
+        from monitor_pjt import process_state as ps
+        from monitor_pjt.snapshot import Snapshot
+    except ImportError:
+        import process_state as ps
+        from snapshot import Snapshot
 
 # --- 튜닝 상수 (매직넘버 금지: 전부 여기 또는 ROS 파라미터) -------------
 DEFAULT_ROBOT_ID = "dsr01"
@@ -77,6 +87,13 @@ DISCONNECTED_SEC = 2.0       # 이보다 오래되면 DISCONNECTED
 LINK_WINDOW = 100            # 링크 품질(hz/latency/loss) 계산 표본 수
 LOG_MAX_LINES = 2000         # 로그 링버퍼 상한 (무한 append 금지)
 MAX_JOG_SPEED_PCT = 20.0     # UI에서 낼 수 있는 최대 jog 속도 [%] 하드 리밋
+DEFAULT_LINEAR_SPEED = 20.0   # dashboard 1회 상대 moveL 선속도 [mm/s]
+DEFAULT_LINEAR_ACC = 50.0     # dashboard 1회 상대 moveL 선가속도 [mm/s²]
+JOG_ROT_VEL_DPS = 20.0        # dashboard A/B/C 회전 속도 [deg/s]
+JOG_ROT_ACC_DPS2 = 40.0       # dashboard A/B/C 회전 가속도 [deg/s²]
+JOG_JOINT_VEL_DPS = 5.0       # dashboard J6 회전 속도 [deg/s]
+JOG_JOINT_ACC_DPS2 = 10.0     # dashboard J6 회전 가속도 [deg/s²]
+GRIPPER_SERVICE = "/onrobot/sendCommand"
 DR_BASE = 0                  # get_current_velx/posx, jog의 기준 좌표계
 JOG_AXIS_TASK_X = 6          # Jog.srv: 0~5 = J1~J6, 6~11 = X,Y,Z,rx,ry,rz
 
@@ -159,6 +176,44 @@ def norm3(values):
     return math.sqrt(sum(v * v for v in values[:3]))
 
 
+def _mat_vec(matrix, vector):
+    return [
+        sum(matrix[row][column] * vector[column] for column in range(3))
+        for row in range(3)
+    ]
+
+
+def euler_zyz_matrix(a_deg, b_deg, c_deg):
+    """Doosan posx [A,B,C] (intrinsic Z-Y-Z)를 3x3 회전행렬로 변환."""
+    a, b, c = map(math.radians, (a_deg, b_deg, c_deg))
+    ca, sa = math.cos(a), math.sin(a)
+    cb, sb = math.cos(b), math.sin(b)
+    cc, sc = math.cos(c), math.sin(c)
+    return [
+        [ca * cb * cc - sa * sc, -ca * cb * sc - sa * cc, ca * sb],
+        [sa * cb * cc + ca * sc, -sa * cb * sc + ca * cc, sa * sb],
+        [-sb * cc, sb * sc, cb],
+    ]
+
+
+def rotate_pose_about_tool_offset(pose, axis, delta_deg, offset):
+    """TOOL 오프셋 지점의 BASE 위치를 유지하며 A/B/C 자세 목표를 계산."""
+    if len(pose) != 6 or len(offset) != 3 or axis not in (3, 4, 5):
+        raise ValueError("invalid pose, offset, or rotation axis")
+    values = [float(value) for value in (*pose, *offset, delta_deg)]
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("pose and offset must contain finite values")
+    current_rotation = euler_zyz_matrix(*pose[3:6])
+    current_offset = _mat_vec(current_rotation, offset)
+    pivot = [pose[i] + current_offset[i] for i in range(3)]
+
+    target = [float(value) for value in pose]
+    target[axis] += float(delta_deg)
+    target_offset = _mat_vec(euler_zyz_matrix(*target[3:6]), offset)
+    target[:3] = [pivot[i] - target_offset[i] for i in range(3)]
+    return target
+
+
 def evaluate_safety(robot_state, last_error_level, last_error_group):
     """상태/에러 -> (estop, safety_stop, collision_suspected, fault).
 
@@ -198,6 +253,7 @@ class SystemMonitor(Node):
         self._last_error_group = 0
         self._last_error_level = 0
         self._step_started = None
+        self._motion_pending = False
 
         # --- 구독 ---
         self.create_subscription(
@@ -237,8 +293,17 @@ class SystemMonitor(Node):
             "posx": self.create_client(GetCurrentPosx, f"{ns}/aux_control/get_current_posx"),
             "velx": self.create_client(GetCurrentVelx, f"{ns}/aux_control/get_current_velx"),
             "stop": self.create_client(MoveStop, f"{ns}/motion/move_stop"),
+            "move_line": self.create_client(MoveLine, f"{ns}/motion/move_line"),
+            "move_joint": self.create_client(MoveJoint, f"{ns}/motion/move_joint"),
             "jog": self.create_client(Jog, f"{ns}/motion/jog"),
         }
+        self._gripper_type = None
+        try:
+            from onrobot_rg_msgs.srv import SetCommand
+            self._gripper_type = SetCommand
+            self.cli["gripper"] = self.create_client(SetCommand, GRIPPER_SERVICE)
+        except ImportError:
+            self.get_logger().warn("onrobot_rg_msgs 없음 - 그리퍼 제어 비활성")
 
         self.create_timer(1.0 / self._poll_hz, self._poll)
         self.create_timer(1.0 / self._publish_hz, self._publish)
@@ -311,6 +376,13 @@ class SystemMonitor(Node):
             "set_mode": lambda: self.set_mode(payload.get("mode", "")),
             "jog": lambda: self.jog(payload.get("axis", 0), payload.get("speed", 0.0)),
             "jog_stop": lambda: self.jog_stop(payload.get("axis", 0)),
+            "move_task": lambda: self.move_task(
+                payload.get("axis", 0),
+                payload.get("distance", 0.0),
+                payload.get("linear_speed", DEFAULT_LINEAR_SPEED),
+                payload.get("tcp_offset", [0.0, 0.0, 0.0])),
+            "move_joint6": lambda: self.move_joint6(payload.get("delta", 0.0)),
+            "gripper": lambda: self.gripper(payload.get("command", "")),
         }
         action = actions.get(cmd)
         if action is None:
@@ -363,9 +435,13 @@ class SystemMonitor(Node):
         try:
             result = future.result()
         except Exception as error:            # 서비스 예외를 삼키지 않는다 (§5.4)
+            if key in ("move_line", "move_joint"):
+                self._motion_pending = False
             self._log("ERROR", f"{key} service failed: {error}")
             return
         if result is None or not getattr(result, "success", True):
+            if key in ("move_line", "move_joint"):
+                self._motion_pending = False
             self._log("WARN", f"{key} service returned failure")
             return
         on_result(result)
@@ -474,6 +550,117 @@ class SystemMonitor(Node):
     def jog_stop(self, axis):
         self.jog(axis, 0.0)
 
+    def move_task(self, axis, distance, linear_speed, tcp_offset):
+        """control_GUI의 1회 상대 moveL 및 TOOL-offset pivot 회전을 수행."""
+        if not self._guard("move_task") or self._motion_pending:
+            if self._motion_pending:
+                self._log("WARN", "move_task ignored: previous motion is pending")
+            return
+        try:
+            axis = int(axis)
+            distance = float(distance)
+            linear_speed = max(1.0, min(300.0, float(linear_speed)))
+            offset = [float(value) for value in tcp_offset]
+            if axis not in range(6) or len(offset) != 3:
+                raise ValueError
+            if not all(math.isfinite(value) for value in [distance, *offset]):
+                raise ValueError
+            if any(abs(value) > 1000.0 for value in offset):
+                raise ValueError
+        except (TypeError, ValueError):
+            self._log("WARN", "invalid move_task payload")
+            return
+
+        request = MoveLine.Request()
+        if axis < 3:
+            target = [0.0] * 6
+            target[axis] = distance
+            request.mode = 1                 # DR_MV_MOD_REL
+            description = f"REL/BASE {'XYZ'[axis]} {distance:+.1f} mm"
+        else:
+            if len(self.snap.tcp_posx) < 6:
+                self._log("WARN", "rotation ignored: current TCP pose unavailable")
+                return
+            try:
+                target = rotate_pose_about_tool_offset(
+                    self.snap.tcp_posx[:6], axis, distance, offset)
+            except ValueError as error:
+                self._log("WARN", f"rotation target failed: {error}")
+                return
+            request.mode = 0                 # DR_MV_MOD_ABS
+            description = (
+                f"OFFSET-PIVOT {'ABC'[axis - 3]} {distance:+.1f} deg "
+                f"offset={offset}")
+
+        request.pos = target
+        request.vel = [linear_speed, JOG_ROT_VEL_DPS]
+        request.acc = [
+            max(DEFAULT_LINEAR_ACC, min(400.0, linear_speed * 2.0)),
+            JOG_ROT_ACC_DPS2,
+        ]
+        request.time = 0.0
+        request.radius = 0.0
+        request.ref = DR_BASE
+        request.blend_type = 0
+        request.sync_type = 0
+        if not self.cli["move_line"].service_is_ready():
+            self._log("WARN", "moveL ignored: motion/move_line service unavailable")
+            return
+        self._motion_pending = True
+        self._log("INFO", f"moveL command: {description}")
+        self._call("move_line", request, self._motion_done)
+
+    def move_joint6(self, delta_deg):
+        """현재 joint state 기준 J6 절대 목표를 만들어 moveJ로 보낸다."""
+        if not self._guard("move_joint6") or self._motion_pending:
+            if self._motion_pending:
+                self._log("WARN", "move_joint6 ignored: previous motion is pending")
+            return
+        if len(self.snap.joint_pos_deg) < 6:
+            self._log("WARN", "J6 rotation ignored: current joint pose unavailable")
+            return
+        try:
+            delta = float(delta_deg)
+            if not math.isfinite(delta):
+                raise ValueError
+        except (TypeError, ValueError):
+            self._log("WARN", "invalid J6 delta")
+            return
+        target = list(self.snap.joint_pos_deg[:6])
+        target[5] += delta
+        request = MoveJoint.Request()
+        request.pos = target
+        request.vel = JOG_JOINT_VEL_DPS
+        request.acc = JOG_JOINT_ACC_DPS2
+        request.time = 0.0
+        request.radius = 0.0
+        request.mode = 0
+        request.blend_type = 0
+        request.sync_type = 0
+        if not self.cli["move_joint"].service_is_ready():
+            self._log("WARN", "moveJ ignored: motion/move_joint service unavailable")
+            return
+        self._motion_pending = True
+        self._log("INFO", f"moveJ command: J6 {delta:+.1f} deg")
+        self._call("move_joint", request, self._motion_done)
+
+    def _motion_done(self, _result):
+        self._motion_pending = False
+        self._log("INFO", "discrete motion done")
+
+    def gripper(self, command):
+        if not self._guard("gripper"):
+            return
+        if command not in ("o", "c") or self._gripper_type is None:
+            self._log("WARN", "invalid or unavailable gripper command")
+            return
+        request = self._gripper_type.Request()
+        request.command = command
+        label = "open" if command == "o" else "close"
+        self._log("INFO", f"gripper {label} requested")
+        self._call("gripper", request, lambda _result: self._log(
+            "INFO", f"gripper {label} done"))
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -516,6 +703,16 @@ def _demo():
     assert evaluate_safety(2, 1, ERROR_GROUP_SAFETY)[2] is True
 
     assert abs(norm3([3.0, 4.0, 0.0, 9.0]) - 5.0) < 1e-9
+    pose = [100.0, 200.0, 300.0, 10.0, 20.0, 30.0]
+    rotated = rotate_pose_about_tool_offset(pose, 3, 5.0, [0.0, 0.0, 0.0])
+    assert rotated[:3] == pose[:3] and rotated[3] == 15.0
+    offset = [10.0, -4.0, 7.0]
+    before = _mat_vec(euler_zyz_matrix(*pose[3:]), offset)
+    after = _mat_vec(euler_zyz_matrix(*rotated[3:]), offset)
+    # offset=0 이외의 피벗도 위 함수 자체에서 유한한 6D 목표를 내야 한다.
+    pivoted = rotate_pose_about_tool_offset(pose, 5, -5.0, offset)
+    assert len(pivoted) == 6 and all(math.isfinite(value) for value in pivoted)
+    assert before != after
     json.dumps(asdict(Snapshot()))           # GUI로 나가는 JSON 직렬화 확인
     print("system_monitor self-check OK")
 

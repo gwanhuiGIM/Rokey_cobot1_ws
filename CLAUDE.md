@@ -1,70 +1,49 @@
-# CLAUDE.md — ROS 2 로보틱스 워크스페이스 하네스
+# CLAUDE.md — cobot1_ws
 
-## 0. 최상위 원칙
-- **추측 금지**: API 시그니처가 확실하지 않으면 `inspect.signature()` 또는 실제 헤더/매뉴얼로 확인한 뒤 쓴다. 확인 못 했으면 코드에 `# UNVERIFIED:` 주석을 남기고 나에게 보고한다.
-- **검증 없는 "완료" 금지**: `./scripts/verify.sh`가 통과하지 않으면 절대 "완료"라고 말하지 않는다.
-- **실기 안전**: 실제 로봇(dsr01 등)에 movej/movel/서보 명령을 보내는 코드는 사람 승인 없이 실행하지 않는다.
+> 공통 규칙(빌드 게이트·금지 규칙·응답 계약·문서 규칙)은 `~/.claude/CLAUDE.md`에 있다. 여기엔 **이 ws에서만 참인 것**만 둔다.
 
-## 1. 환경 (프로젝트에 맞게 수정)
-- ROS 2 Humble / Ubuntu 22.04 / Python 3.10
+## 1. 환경
+- ROS 2 Humble / Ubuntu 22.04 / Python 3.10 / RMW `rmw_fastrtps_cpp`
 - 워크스페이스: `~/cobot1_ws`
-- 주요 패키지: `src/move`, `src/tray_balance`
-- 하드웨어: Doosan M0609 (네임스페이스 `dsr01`), OnRobot RG2-FT, OAK-D-Pro, RPLIDAR
-- 시뮬: Isaac Sim 5.1.0 (Python 3.11 — ROS 2와 인터프리터가 다르므로 반드시 `python.sh` 사용)
-- RMW: `rmw_fastrtps_cpp` / `ROS_DOMAIN_ID`는 `.envrc` 참조
+- 하드웨어: Doosan **M0609** (네임스페이스 `dsr01`), OnRobot **RG2** / **RG6** 그리퍼, OAK-D-Pro, RPLIDAR
+  - RG2는 **F/T 내장 모델이 아니다** (3절 참조). "RG2-FT"로 가정하고 실측 힘을 읽으려 하면 틀린다.
+- 시뮬: Isaac Sim 5.1.0 (Python 3.11 — ROS 2와 인터프리터가 달라 반드시 `python.sh` 사용)
 
-## 2. 표준 절차
+## 2. 패키지 지도 (`src/`)
+| 패키지 | 역할 |
+|---|---|
+| `move` | M0609 모션 노드 + **`.drl` 스크립트** (tray_balance, m0609_gear, accel_estimation) |
+| `tray_balance_kkh` | F/T 기반 쟁반 무게중심 추정 |
+| `cobot_rg2` | 그리퍼 브링업 (`doosan-robot2` 서브트리 포함, `m0609_rg2_bringup/launch/bringup.launch.py`) |
+| `cup_detect` | 컵 인식 + `probe_grip_v*` 접촉 탐지 |
+| `coffee_system`, `rokey` | 커피 시퀀스 상위 로직, 웹 UI |
+| `monitor_pjt`, `monitor_sys`, `dooy_monitor_spiral` | 모니터링 / 웹 어드민 |
+| `adaptive_move` | — |
+
+별도 트리: `coffee_pipeline_ws/`, `DooSan_Robotics_Cobot_Project/` (독립 ws, 루트에서 빌드하면 안 됨)
+
+## 3. 실기에서 확인한 사실 (문서·직관과 다르다 — 재발견하지 말 것)
+- **`movel(..., ref=DR_TOOL, mod=DR_MV_MOD_REL)`의 자세 슬롯 `[rx,ry,rz]`는 ZYZ 오일러가 아니라 툴축 회전벡터(axis-angle, deg)다.** 실기 검증(2026-07): `movel([0,0,0,5,0,0], REL, DR_TOOL)` → 툴 **X축** 회전. 회전벡터를 그대로 넣으면 되고 오일러 변환은 불필요. (ABS 모드/다른 ref는 미확인 — ZYZ일 수 있음)
+- **RG2에는 실측 힘 피드백이 없다.** `/onrobot_joint_states`의 `effort`는 `busy ? force : 0`인 **명령값**이다. 파지 판정은 `position` plateau + `effort≠0`(stall)로 한다. 파손 감지 지표는 **width(=position) 차분**. 종이컵에 40N은 과하다(RG2 최소 ~3N).
+- 하드웨어 grip 비트는 gSTA 상태워드(register 268 = `response[10]`)의 **bit1**. `comModbusTcp.getStatus`의 라벨이 틀려 `'grip'` 키는 항상 true다 → `(int(status['busy'])>>1)&1`로 뽑는다.
+- **힘 기반 노드(`probe_grip*`, `tray_balance*`)가 방향성 편향·오검출을 보이면 코드가 아니라 펜던트를 먼저 본다.** DART의 Tool Weight 프리셋이 안 걸리면 그리퍼 자중(RG6 = 1.25kg ≈ 12.3N)이 외력으로 읽힌다. 노드의 `No Tool payload preset active` WARN 유무 / `GetCurrentTool` 응답으로 먼저 확인. 부호·threshold를 만지는 건 증상만 가린다.
+- F/T 기반 무게중심 감지의 하한: **골프공(46g)은 감지 불가**(모멘트 변화 ~0.035Nm < 노이즈). 실제 대상(접시+음료 0.5~1.5kg)으로 테스트해야 한다.
+- `tare`는 pose 고정 전제. tare 후 직접교시 등으로 관절을 움직이면 기준값이 무효다.
+
+## 4. DRL (Doosan Robot Language) 작업 규칙
+- `.drl`은 컨트롤러(DART)에서 도는 별개 언어다. **rclpy 노드가 아니고 colcon 빌드 대상도 아니다** — `python3 foo.drl`로 문법 검사하려 하면 안 된다.
+- 파이썬 노드 ↔ DRL 값 전달은 `drvar`를 쓴다. 어느 쪽이 원천인지 코드 상단에 주석으로 명시한다.
+- DRL에서만 되는 것: `get_external_torque()` 같은 컨트롤러 내부 실시간 신호. ROS 토픽으로는 주기·지연이 다르다.
+- 파이썬 노드를 DRL로 옮기기 전에 **그 노드가 쓰는 API가 DRL에 존재하는지 매뉴얼로 확인**하고, 없으면 옮기지 말고 보고한다.
+
+## 5. 검증
 ```bash
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install --packages-select <pkg>
 source install/setup.bash
-./scripts/verify.sh <pkg>
+./scripts/verify.sh <pkg>   # 보조: 환경·시크릿·빌드·테스트·런치 스모크. SMOKE_LAUNCH 설정 시 런치까지
 ```
+`verify.sh`는 이 ws에만 있다. 완료 판정의 필수 게이트는 `colcon build`이고, verify.sh는 그 위의 선택 점검이다.
 
-## 3. 금지 규칙 (과거 실패에서 축적 — 실패할 때마다 1줄씩 추가한다)
-- `pip install opencv-python` 금지 → `sudo apt install python3-opencv` (rclpy와 Qt 라이브러리 충돌로 segfault)
-- `numpy>=2.0` 금지 (Humble의 cv_bridge 비호환)
-- `pydantic v2` 금지 (`generate_parameter_library`가 v1 요구) → v2가 필요한 스크립트는 venv/conda로 격리
-- API 키·토큰을 소스에 하드코딩 금지 → 환경변수 + `.env`(gitignore)
-- `build/`, `install/`, `log/`는 절대 커밋하지 않는다
-- `rm -rf` 대상에 워크스페이스 루트나 `src/`를 포함하지 않는다
-
-## 4. 코드 컨벤션
-- 노드 파일명 `*_node.py`, 클래스는 `PascalCase`, 토픽/서비스는 `snake_case`
-- 모든 노드는 파라미터를 하드코딩하지 말고 `declare_parameter()` 사용
-- 블로킹 서비스 호출 금지 → `call_async()` + `MultiThreadedExecutor` + `ReentrantCallbackGroup`
-- QoS는 명시적으로 지정한다 (센서 스트림은 `SensorDataQoS`, 명령은 `reliable/depth=10`)
-
-## 5. 문서
-- 세션 상태: `docs/state.md` (매 세션 끝에 갱신)
-- 계획: `docs/plans/<날짜>-<기능>.md`
-- 결정 기록: `docs/decisions/` (ADR 형식)
-<!-- 기존 CLAUDE.md 맨 아래에 이 블록을 그대로 붙여넣으세요. 이 팩에서 가장 중요한 파일입니다. -->
-
-## 6. 응답 계약 (모든 실질적 답변에 필수, 생략 금지)
-
-답변 끝에 항상 아래를 붙인다. 길게 쓰지 말고 각 1~2줄.
-
-```
----
-확신도: 검증됨(실행·문서로 확인) / 추론(근거 있으나 미확인) / 추측(모름)
-내가 채워넣은 가정: (사용자가 말해주지 않아 내가 임의로 정한 것만 최대 3개)
-확인 요청: (O/X 또는 한 단어로 답할 수 있는 질문 1개)
-```
-
-**이유**: 사용자는 자기가 아는 것을 전부 말해주지 못한다. 팀 사정, 현장 제약, 이미 실패한 시도 같은 것들은
-"물어봐야 떠오르는" 정보다. 그러니 **내가 먼저 틀린 가정을 소리 내어 말해야** 사용자가 그것을 바로잡을 수 있다.
-질문을 여러 개 던져 부담을 주지 말고, 가장 비용이 큰 가정 하나만 확인받아라.
-
-## 7. 컨텍스트 대장 (매 세션 시작 시 읽는다)
-- `docs/context/constraints.md` — 현실 제약 (하드웨어 개체차, 현장 조명, 납기, 예산, 이미 실패한 접근)
-- `docs/context/team.md` — 담당자, 인터페이스 소유권, 합의된 결정, 건드리면 안 되는 영역
-- `docs/context/unknowns.md` — 미해결 질문 대장
-
-이 파일들과 모순되는 코드를 제안하면 그것은 오답이다. 파일에 없는 제약이 대화 중 드러나면 **즉시 해당 파일에 추가**하라.
-
-## 8. 성장 모드 (기본값: ON)
-- 사용자가 답을 물으면 **바로 정답을 주지 않는다.** 먼저 사용자의 현재 가설을 묻는다.
-- 사용자가 "그냥 알려줘", "급해"라고 하면 즉시 정답 모드로 전환한다. 고집부리지 않는다.
-- 코드를 작성했으면 **왜 그렇게 했는지 3줄**과 **사용자가 검토해야 할 지점 1곳**을 반드시 표시한다.
-- 사용자가 틀린 판단을 하면 부드럽게 넘어가지 말고 근거를 들어 지적한다. 동의는 값싸고 반대는 비싸다.
+## 6. 컨텍스트 대장
+`docs/context/{constraints,team,unknowns}.md` — 현재 **빈 템플릿**이다. 3절의 사실들이 원래 여기 들어갈 내용이었다. 대화 중 새 제약이 드러나면 3절이나 이 파일들에 적는다(둘 다 적을 필요 없다).

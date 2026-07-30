@@ -1,0 +1,199 @@
+{
+  "main": {
+    "id": "6105e4aa34c40152",
+    "type": "split",
+    "children": [
+      {
+        "id": "dd338151d205b3d3",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "2ce1405a02f66c66",
+            "type": "leaf",
+            "pinned": true,
+            "state": {
+              "type": "graph",
+              "state": {},
+              "pinned": true,
+              "icon": "lucide-git-fork",
+              "title": "그래프 뷰"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "9415ce0c7ad88e24",
+    "type": "split",
+    "children": [
+      {
+        "id": "b36932744f97cae2",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "6a70ebb427cb44b5",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "파일 탐색기"
+            }
+          },
+          {
+            "id": "a059ece8c3b10795",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "검색"
+            }
+          },
+          {
+            "id": "8946647b0b85d6de",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "북마크"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 202.5
+  },
+  "right": {
+    "id": "f91a36d41a606386",
+    "type": "split",
+    "children": [
+      {
+        "id": "11e9c53c76727281",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "94887eee8ac3b5b4",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "백링크"
+            }
+          },
+          {
+            "id": "04759ce8e10cd6d9",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "나가는 링크"
+            }
+          },
+          {
+            "id": "6180848b81772f43",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "태그"
+            }
+          },
+          {
+            "id": "e0c8e0f3a2f62a79",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "모든 속성"
+            }
+          },
+          {
+            "id": "59df0b477b3852aa",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "개요"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:빠른 전환기 열기": false,
+      "graph:그래프 뷰 열기": false,
+      "canvas:새 캔버스 만들기": false,
+      "daily-notes:오늘의 일일 노트 열기": false,
+      "templates:템플릿 삽입": false,
+      "command-palette:명령어 팔레트 열기": false,
+      "bases:새 베이스 생성하기": false
+    }
+  },
+  "active": "2ce1405a02f66c66",
+  "lastOpenFiles": [
+    "ws/cobot1/Non_README packages.md",
+    "ws/cobot1/Non-README packages.md",
+    "docs/pkg/cup_detect.md",
+    "ws/cobot1/pkg/rokey.md",
+    "ws/cobot1/pkg",
+    "docs/packages.md",
+    "ws/cobot1",
+    "ws",
+    "LICENSE.md",
+    "docs/packages.md.tmp.93699.1f6135ccb686",
+    "src/cobot_rg2/doosan-robot2/dsr_example2/dsr_visualservoing/README.md",
+    "src/cobot_rg2/onrobot-ros2/README.md",
+    "coffee_pipeline_ws/docs/plans/2026-07-27-full-6-stage-flow.md",
+    "coffee_pipeline_ws/README.md",
+    "src/cobot_rg2/doosan-robot2/dsr_description2/mujoco_models/2f85/README.md"
+  ]
+}

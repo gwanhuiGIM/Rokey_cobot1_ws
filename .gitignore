@@ -26,3 +26,4 @@ runs/
 .vscode/
 .idea/
 .DS_Store
+coffee_pipeline_ws/

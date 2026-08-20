@@ -1,3 +1,7 @@
+---
+updated: 2026-08-19
+---
+
 # cobot1_ws 패키지 README 인덱스
 
 `docs/src` → `../src` 심링크로 vault에서 열린다. 링크는 `ws/cobot1/src/...` 경로.

@@ -24,6 +24,12 @@ disable-model-invocation: true
 - [ ] TF 프레임 이름과 좌표계 방향이 문서와 일치하는가? 단위는 SI(m, rad)인가?
 - [ ] `setup.py` / `CMakeLists.txt` / `package.xml`에 새 파일·의존성을 등록했는가?
 
+## 태스크 완료 직후 (필수)
+verify.sh가 PASS한 뒤, @cross-review 서브에이전트를 호출해 방금 작성한
+코드를 백지 상태에서 재검토받는다. 결과는 아래에 그대로 첨부한다.
+cross-review가 Blocker를 지적하면 "완료"라고 쓰지 말고 먼저 대응한다.
+"의도를 알 수 없는 곳"에 항목이 있으면 이름이나 주석을 고친 뒤 넘어간다.
+
 ## 매 태스크 종료 시 출력 형식
 ```
 ### 태스크 N: <제목>

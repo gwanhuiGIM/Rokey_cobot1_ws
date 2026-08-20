@@ -1,6 +1,7 @@
 # CLAUDE.md — cobot1_ws
 
 > 공통 규칙(빌드 게이트·금지 규칙·응답 계약·문서 규칙)은 `~/.claude/CLAUDE.md`에 있다. 여기엔 **이 ws에서만 참인 것**만 둔다.
+> Claude/Codex 멀티에이전트 위임·리뷰 절차는 `~/vault/ai/MULTI_AGENT_POLICY.md`(여러 ws 공유 단일 출처)를 따른다.
 
 ## 1. 환경
 - ROS 2 Humble / Ubuntu 22.04 / Python 3.10 / RMW `rmw_fastrtps_cpp`

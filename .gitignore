@@ -31,4 +31,6 @@ coffee_pipeline_ws/
 .agents
 .claude
 .obsidian
-docs/	
+docs/
+
+CLAUDE.md	

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>tray_balance_kkh</name>
+  <version>0.0.0</version>
+  <description>M0609 + RG2: TCP 힘/토크 피드백으로 쟁반을 기울여 판 위 물체의 중심을 유지</description>
+  <maintainer email="sbzmf1@o.cnu.ac.kr">kimkh</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>action_msgs</depend>
+  <depend>dsr_msgs2</depend>
+  <depend>dsr_common2</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>tf2_ros</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -1,0 +1,171 @@
+# =============================================================
+# tray_balance_force.drl — 판 위 물체 이동 감지 → TCP 점고정 순응 틸트로 중심 유지
+# -------------------------------------------------------------
+# 사용: DART Task Writer > Custom Code 임포트 후 실행
+#       (순수 오프셋 역산식만 검증: python3 tray_balance_force.drl --selftest)
+# 대상: M0609 + RG2 | 좌표계: DR_TOOL (모멘트/틸트), DR_BASE (초기 자세)
+# 전제: 그리퍼가 판을 파지, 툴 +Z축이 중력 방향(아래)과 정렬.
+#       판 정중앙에 물체를 두고 손 뗀 뒤 시작(tare 기준).
+# 입력: 서빙 자세 q_serving(TODO 확정), Tool Weight/TCP 사전 설정.
+# 주의: TCP 환산길이 ≤ 500mm에서만 순응제어(매뉴얼 V2.12). 특이점 근처 금지.
+#       KP_TILT/SIGN/강성은 실기 튜닝값 — 진동 시 SIGN 반전부터 확인.
+# =============================================================
+#
+# 원리
+# ----
+# 툴 +Z가 중력(아래)이면 판은 툴 X-Y 평면. 물체 무게 F≈(0,0,+W).
+# 물체가 판 중심에서 (dx,dy) 벗어나면 TCP에 모멘트가 실린다:
+#     tau = r x F,  r=(dx,dy,rz)  ->  Tx = dy*W,  Ty = -dx*W
+# 즉 내장 토크센서가 읽는 Tx,Ty가 곧 물체 이동 방향/크기다(외부센서 불필요).
+# 되돌리려면 실린 쪽을 들어올리게 판을 기울여 물체를 중심으로 굴린다:
+#   중심 상태의 모멘트를 소프트웨어 tare(기준값 저장 후 매 루프 차감) →
+#   task_compliance_ctrl로 TCP 위치는 고정(점고정)하고 회전만 순응 →
+#   set_desired_force로 측정 모멘트에 반대되는 복원 모멘트를 걸어 판을 틸트.
+
+import math
+
+# ---------------- 사용자 튜닝 파라미터 ----------------
+G              = 9.81     # 중력가속도 [m/s^2]
+LOOP_HZ        = 100      # 제어 루프 주파수 [Hz]
+SETTLE_TIME    = 2.0      # 모션/진동 안정화 대기 [s] (매뉴얼: 외력초기화 전 필수)
+LPF_ALPHA      = 0.2      # 모멘트 저역통과 계수(0~1). 작을수록 부드럽/느림
+
+# 복원 제어: 목표 모멘트 = -SIGN*KP_TILT * (측정 모멘트).  측정 모멘트에
+# 반대로 걸어 실린 쪽을 들어올린다. KP_TILT는 무차원 게인(W가 접혀 있음).
+KP_TILT        = 0.8      # TODO(실기 튜닝): 약하면 못 되돌림, 크면 진동
+SIGN           = +1       # 진동/발산 시 -1로 반전 (툴 정렬/센서 부호 실측 확인)
+MAX_MOMENT_NM  = 3.0      # set_desired_force 복원 모멘트 상한 [Nm] (안전 클램프)
+
+# 판정 임계 (모멘트 기준 — W로 나눌 필요 없음)
+DEADBAND_NM    = 0.05     # 이 이하 모멘트는 중심으로 간주, 복원 생략(채터링 방지)
+EDGE_NM        = 1.2      # TODO(실기 튜닝): 이 이상이면 가장자리 이탈로 보고 정지
+
+# 순응 강성 [Fx,Fy,Fz, Mx,My,Mz]. 병진은 강하게(점고정), 회전은 무르게(틸트 허용).
+COMPLIANCE_STIFFNESS = [3000.0, 3000.0, 3000.0, 100.0, 100.0, 200.0]  # TODO 튜닝
+
+# 물체 유무 판정: tare 전 측정 무게가 이보다 작으면 시작 안 함 [N]
+MIN_WEIGHT_N   = 0.10     # 골프공(≈0.45N)의 약 20%. 다른 물체면 조정
+
+# ---------------- 순수 물리 역산 (센서 무관, selftest 대상) ----------------
+def estimate_offset(tx, ty, weight_n):
+    """TCP 모멘트(Tx,Ty)와 무게 W로 판 위 물체 오프셋(dx,dy)[m] 역산.
+    툴 +Z=중력 가정: Tx=dy*W, Ty=-dx*W  ->  dx=-Ty/W, dy=Tx/W."""
+    dx = -ty / weight_n
+    dy = tx / weight_n
+    return dx, dy
+
+
+def _clamp(v, lo, hi):
+    if v < lo:
+        return lo
+    if v > hi:
+        return hi
+    return v
+
+
+# ---------------- 로봇 제어 본체 ----------------
+def main():
+    # Phase 0: 준비 자세 — 툴 +Z를 아래로. (Tool Weight/TCP는 사전 설정 전제)
+    # 서빙(운반) 자세 — 실기 티칭값으로 교체할 것.
+    q_serving = posj(0.0, 0.0, 90.0, 0.0, 90.0, 0.0)  # TODO(확정 필요): 실측 자세
+    set_velj(30.0)
+    set_accj(60.0)
+    movej(q_serving)
+    wait(SETTLE_TIME)  # 진동 안정화 후 외력 초기화 (매뉴얼 권고)
+
+    # 물체 유무 확인: tare 전에 무게(Fz) 측정. tare하면 Fz도 0이 되므로 순서 중요.
+    f0 = get_tool_force(ref=DR_TOOL)   # [Fx,Fy,Fz,Tx,Ty,Tz], TCP 기준
+    weight_n = abs(f0[2])              # 툴 +Z가 중력이므로 무게는 Fz에 실림
+    if weight_n < MIN_WEIGHT_N:
+        # 물체가 판 위에 없을 가능성 — 시작하지 않음
+        # (get_external_torque()로 관절토크를 추가 진단할 수도 있으나 생략)
+        # ponytail: 진단 로그는 tp_popup 대신 print. 필요 시 팝업 추가.
+        raise ValueError("tare 전 측정 무게가 너무 작음 — 판 위 물체 확인 필요")
+
+    # 중심 상태의 모멘트를 기준으로 저장 → 이후 (Tx-tare)가 "중심 대비 이동분".
+    # 판 정중앙 비이동 상태에서 1회. set_external_force_reset()은 이 바인딩에
+    # 없어(natural_point_accel_estimation.py:46 참조) 소프트웨어 tare로 대체.
+    tare_tx, tare_ty = f0[3], f0[4]
+
+    # Phase 1: TCP 점고정 순응 제어 — 병진 강성으로 위치 고정, 회전만 무르게
+    task_compliance_ctrl(COMPLIANCE_STIFFNESS)
+    wait(SETTLE_TIME)
+
+    kp = SIGN * KP_TILT
+    tx_f, ty_f = 0.0, 0.0  # 모멘트 LPF 상태
+
+    try:
+        while True:
+            f = get_tool_force(ref=DR_TOOL)
+            # get_tool_force 실패 시 -1 반환 방어
+            if f == -1:
+                break
+
+            # 중심 대비 이동분 = 측정 모멘트 - tare 기준 모멘트
+            tx_f = LPF_ALPHA * (f[3] - tare_tx) + (1.0 - LPF_ALPHA) * tx_f
+            ty_f = LPF_ALPHA * (f[4] - tare_ty) + (1.0 - LPF_ALPHA) * ty_f
+            moment_mag = math.sqrt(tx_f * tx_f + ty_f * ty_f)
+
+            # 가장자리 이탈 감지 → 즉시 정지 (check_force_condition으로 실린 축 확인)
+            #   DR_AXIS_C(툴 Z축 모멘트) 대신, 물체가 판을 벗어나면 무게가 빠져
+            #   Fz가 줄어드는 것도 유효 신호. 여기선 모멘트 크기 임계로 판정.
+            if moment_mag > EDGE_NM:
+                release_force(0.5)
+                release_compliance_ctrl()
+                stop(DR_QSTOP)
+                raise RuntimeError("물체 가장자리 이탈 감지 — 정지")
+
+            # 데드밴드: 중심 근처면 복원 모멘트 0 (판을 수평으로 유지)
+            if moment_mag < DEADBAND_NM:
+                set_desired_force(
+                    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    [0, 0, 0, 1, 1, 0],  # 툴 X,Y 모멘트만 힘제어
+                )
+                wait(1.0 / LOOP_HZ)
+                continue
+
+            # 복원 모멘트 = 측정 모멘트에 반대 방향 (실린 쪽을 들어올림)
+            #   dx>0(물체 +X) → Ty_meas<0 → Ty_d>0 → +Y축 회전 → +X측 상승 → 물체 -X로 복귀
+            tx_d = _clamp(-kp * tx_f, -MAX_MOMENT_NM, MAX_MOMENT_NM)
+            ty_d = _clamp(-kp * ty_f, -MAX_MOMENT_NM, MAX_MOMENT_NM)
+            set_desired_force(
+                [0.0, 0.0, 0.0, tx_d, ty_d, 0.0],
+                [0, 0, 0, 1, 1, 0],
+            )
+            wait(1.0 / LOOP_HZ)
+
+    finally:
+        # Phase 2: 종료 — 힘/순응 제어 해제 (소프트웨어 tare라 복원할 offset 없음)
+        release_force(0.5)
+        release_compliance_ctrl()
+
+
+# ---------------- self-check (순수 역산식만, 로봇 없이 실행 가능) ----------------
+def _selftest():
+    W = 1.0 * G
+    dx, dy = estimate_offset(0.0, 0.0, W)
+    assert abs(dx) < 1e-9 and abs(dy) < 1e-9
+
+    # 물체가 +X로 이동(dx>0) → Ty<0 이어야 함(Ty=-dx*W). 역으로 Ty만 주면 dx 복원.
+    dx, dy = estimate_offset(0.0, -0.5, W)          # Ty=-0.5
+    assert abs(dx - (0.5 / W)) < 1e-9 and abs(dy) < 1e-9
+    # 물체가 +Y로 이동(dy>0) → Tx>0 (Tx=dy*W). Tx만 주면 dy 복원.
+    dx, dy = estimate_offset(0.5, 0.0, W)           # Tx=+0.5
+    assert abs(dy - (0.5 / W)) < 1e-9 and abs(dx) < 1e-9
+    # 복원 모멘트 부호: dx>0이면 Ty_d>0(=+Y회전, +X측 상승)이 되어야 함
+    tx, ty = 0.0, -0.5                              # 물체 +X
+    ty_d = -(+1) * KP_TILT * ty
+    assert ty_d > 0, "복원 모멘트 부호 오류: +X 이동 시 +Y회전이어야 함"
+
+    print("tray_balance_force self-check OK")
+
+
+if __name__ == "__main__":
+    import sys
+    if "--selftest" in sys.argv:
+        _selftest()
+    else:
+        main()
+else:
+    # DART Custom Code로 임포트 실행되는 경우
+    main()

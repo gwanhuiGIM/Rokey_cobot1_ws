@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ROS2 build artifacts
+build/
+install/
+log/
+
+# VS Code
+.vscode/
+
+# JetBrains
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 테스트/도구 캐시
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# colcon metadata
+.colcon/
+
+
+# Etc
+*.log
+cobot2_edu/
+cobot1_edu/
+.git/

@@ -1,0 +1,19 @@
+# kettle_pour_circle_updown.drl - Task Program (메인 실행 파일)
+#
+# 핸드드립 커피 - 주둥이 고정 피벗 붓기, 고정 반지름 원 + Z축 상하운동
+# (m0609, v4 이식). 원본: kettle_circle_pour_v4.py --updown
+#
+# 사용 방법
+#   1) kettle_pour_circle_updown_sub.drl을 이 프로그램과 같은 프로젝트에
+#      Sub Program으로 추가한다.
+#   2) 주전자를 그리퍼로 잡아 바닥과 평행하게, 주둥이가 필터 중앙 위에
+#      오도록 배치한 상태에서 이 프로그램을 Play한다.
+#
+# 동작: 주둥이 고정 -> 기울이기(물 시작) -> 반지름 CIRCLE_RADIUS_MM 원
+# 3바퀴(추가 기울임 + UPDOWN_REVS_PER_CYCLE바퀴당 1회 Z 상하운동) -> 중앙
+# 복귀 -> 필터 회피 상승 -> 수평 복귀(물 정지)
+#
+# ⚠️ 첫 실행은 물 없이 저속으로 궤적만 확인할 것. 파라미터는
+# kettle_pour_circle_updown_sub.drl 상단을 참고.
+
+run_kettle_pour_circle_updown()

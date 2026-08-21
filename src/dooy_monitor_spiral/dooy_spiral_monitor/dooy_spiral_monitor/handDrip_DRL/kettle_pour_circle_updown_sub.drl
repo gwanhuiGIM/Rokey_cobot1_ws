@@ -1,0 +1,198 @@
+# kettle_pour_circle_updown_sub.drl - Sub Program
+#
+# kettle_circle_pour_v4.py --updown(원 + Z축 상하운동)을 티치펜던트 DRL로
+# 그대로 옮긴 버전. kettle_pour_circle_updown.drl(Task Program)과 같은
+# 프로젝트에 Sub Program으로 등록해야 run_kettle_pour_circle_updown()을
+# 호출할 수 있다. kettle_pour_circle_sub.drl과 동일하지만, 원 궤적에
+# UPDOWN_REVS_PER_CYCLE바퀴마다 한 번 Z축 상하운동이 추가된다.
+#
+# 전제 조건 / v4.py와의 차이점 / 실기 첫 테스트 확인 사항은
+# kettle_pour_circle_sub.drl 상단 주석과 동일하다.
+
+import math
+
+# ===== 로봇/그리퍼 설정 =====
+TOOL_NAME = "Tool Weight_1"
+TCP_NAME = "pot"
+
+# ===== 기하 파라미터 =====
+SPOUT_OFFSET_MM = [0.0, 0.0, 10.0]
+POUR_TILT_DEG = 50.0
+EXTRA_TILT_DEG = 40.0
+TILT_SIGN = -1.0
+CIRCLE_RADIUS_MM = 25.0
+CIRCLE_REVS = 3
+STEPS_PER_REV = 24
+POST_POUR_LIFT_MM = 20.0
+# --updown 전용: 붓기 원 궤적에 추가하는 Z축 상하운동 범위(최저~최고, mm).
+UPDOWN_RANGE_MM = 30.0
+# 상하운동 1왕복에 도는 원 바퀴 수 (2바퀴에 위아래 한 번).
+UPDOWN_REVS_PER_CYCLE = 2.0
+
+# ===== 속도/가속도 파라미터 [병진 mm/s|mm/s^2, 회전 deg/s|deg/s^2] =====
+POUR_TILT_VEL = [30.0, 12.0]
+POUR_TILT_ACC = [150.0, 30.0]
+TILT_VEL = [20.0, 8.0]
+TILT_ACC = [100.0, 20.0]
+CIRCLE_VEL = [30.0, 20.0]
+CIRCLE_ACC = [200.0, 60.0]
+
+
+# ===== 순수 3x3 행렬 연산 (컨트롤러에 numpy가 없어 직접 구현) =====
+def _mat3_mul(a, b):
+    result = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    for i in range(3):
+        for j in range(3):
+            s = 0.0
+            for k in range(3):
+                s = s + a[i][k] * b[k][j]
+            result[i][j] = s
+    return result
+
+
+def _mat3_vec_mul(m, v):
+    return [
+        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
+    ]
+
+
+def _rz(deg):
+    rad = math.radians(deg)
+    c = math.cos(rad)
+    s = math.sin(rad)
+    return [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
+
+
+def _ry(deg):
+    rad = math.radians(deg)
+    c = math.cos(rad)
+    s = math.sin(rad)
+    return [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
+
+
+def zyz_to_matrix(a, b, c):
+    """Doosan posx의 ZYZ 오일러 자세를 회전 행렬로 변환한다."""
+    return _mat3_mul(_mat3_mul(_rz(a), _ry(b)), _rz(c))
+
+
+def tilted_pose(home_pose, extra_c_deg, spout_target, spout_offset):
+    """home_pose에 C(툴 로컬 Z) 회전 extra_c_deg를 더하고, 주둥이가
+    spout_target(BASE 좌표)에 오도록 TCP 위치를 역산한 posx를 만든다."""
+    a = home_pose[3]
+    b = home_pose[4]
+    c = home_pose[5]
+    new_c = c + extra_c_deg
+    rotation = zyz_to_matrix(a, b, new_c)
+    offset_base = _mat3_vec_mul(rotation, spout_offset)
+    tcp = [
+        spout_target[0] - offset_base[0],
+        spout_target[1] - offset_base[1],
+        spout_target[2] - offset_base[2],
+    ]
+    return posx([tcp[0], tcp[1], tcp[2], a, b, new_c])
+
+
+def circle_spout_target(spout_center, angle_deg):
+    """필터 중앙(spout_center) 기준, 원 위의 주둥이 목표점.
+    UPDOWN_REVS_PER_CYCLE바퀴마다 한 번, 0 ~ UPDOWN_RANGE_MM 사이를
+    코사인으로 왕복하는 Z축 상하운동을 더한다."""
+    angle_rad = math.radians(angle_deg)
+    cycle_phase = math.radians(angle_deg / UPDOWN_REVS_PER_CYCLE)
+    z_offset = UPDOWN_RANGE_MM * 0.5 * (1.0 - math.cos(cycle_phase))
+    return [
+        spout_center[0] + CIRCLE_RADIUS_MM * math.cos(angle_rad),
+        spout_center[1] + CIRCLE_RADIUS_MM * math.sin(angle_rad),
+        spout_center[2] + z_offset,
+    ]
+
+
+def move_abs(pose, vel, acc):
+    movel(pose, vel=vel, acc=acc, ref=DR_BASE, mod=DR_MV_MOD_ABS)
+
+
+def draw_pour_circle(home_pose, spout_center):
+    """주둥이가 원을 돌면서 진행률에 비례해 EXTRA_TILT_DEG를 추가 기울이고,
+    Z축 상하운동을 더한다. 매 경유점에서 주둥이 목표와 그 시점의 기울임
+    각도로 TCP를 역산하므로 반지름 CIRCLE_RADIUS_MM 원 궤적을 정확히
+    유지한다."""
+    total_points = CIRCLE_REVS * STEPS_PER_REV
+    if total_points > 100:
+        raise ValueError("movesx 경유점 한계(100) 초과 - CIRCLE_REVS/STEPS_PER_REV를 줄일 것")
+    path = []
+    for index in range(1, total_points + 1):
+        progress = index / total_points
+        angle = 360.0 * CIRCLE_REVS * progress
+        extra_c = TILT_SIGN * (POUR_TILT_DEG + EXTRA_TILT_DEG * progress)
+        target = circle_spout_target(spout_center, angle)
+        path.append(tilted_pose(home_pose, extra_c, target, SPOUT_OFFSET_MM))
+    movesx(path, vel=CIRCLE_VEL, acc=CIRCLE_ACC, ref=DR_BASE,
+           mod=DR_MV_MOD_ABS, vel_opt=DR_MVS_VEL_CONST)
+
+
+def run_kettle_pour_circle_updown():
+    original_tcp = get_tcp()
+    original_tool = get_tool()
+    tp_log("진입 시 TCP/Tool 저장: tcp=" + str(original_tcp) + ", tool=" + str(original_tool))
+
+    try:
+        set_tool(TOOL_NAME)
+        set_tcp(TCP_NAME)
+        set_singularity_handling(DR_AVOID)
+
+        tp_log("1) 현재 자세(수평)에서 주둥이 앵커 계산")
+        home_pose = list(get_current_posx(DR_BASE)[0])
+        home_rotation = zyz_to_matrix(home_pose[3], home_pose[4], home_pose[5])
+        offset_base = _mat3_vec_mul(home_rotation, SPOUT_OFFSET_MM)
+        spout_center = [
+            home_pose[0] + offset_base[0],
+            home_pose[1] + offset_base[1],
+            home_pose[2] + offset_base[2],
+        ]
+
+        tp_log("2) 주둥이 고정한 채 " + str(POUR_TILT_DEG) + "도 기울이기 (물 시작)")
+        move_abs(
+            tilted_pose(home_pose, TILT_SIGN * POUR_TILT_DEG, spout_center, SPOUT_OFFSET_MM),
+            POUR_TILT_VEL, POUR_TILT_ACC,
+        )
+
+        tp_log("3) 주둥이를 원 시작점으로 이동 (반지름 " + str(CIRCLE_RADIUS_MM) + " mm)")
+        start_target = circle_spout_target(spout_center, 0.0)
+        move_abs(
+            tilted_pose(home_pose, TILT_SIGN * POUR_TILT_DEG, start_target, SPOUT_OFFSET_MM),
+            CIRCLE_VEL, CIRCLE_ACC,
+        )
+
+        tp_log(
+            "4) 원 " + str(CIRCLE_REVS) + "바퀴 + 추가 기울임 " + str(EXTRA_TILT_DEG)
+            + "도 + 상하운동 " + str(UPDOWN_RANGE_MM) + "mm/" + str(UPDOWN_REVS_PER_CYCLE) + "바퀴"
+        )
+        draw_pour_circle(home_pose, spout_center)
+
+        tp_log("5) 주둥이를 필터 중앙으로 복귀")
+        post_pose = tilted_pose(
+            home_pose, TILT_SIGN * (POUR_TILT_DEG + EXTRA_TILT_DEG),
+            spout_center, SPOUT_OFFSET_MM,
+        )
+        move_abs(post_pose, CIRCLE_VEL, CIRCLE_ACC)
+
+        tp_log("6) 필터 회피: 기울인 자세 그대로 Z+" + str(POST_POUR_LIFT_MM) + "mm 상승")
+        lifted_pose = list(post_pose)
+        lifted_pose[2] = lifted_pose[2] + POST_POUR_LIFT_MM
+        move_abs(posx(lifted_pose), TILT_VEL, TILT_ACC)
+
+        tp_log("7) 상승한 높이에서 수평 자세로 복귀 (물 정지)")
+        lifted_spout_target = [spout_center[0], spout_center[1], spout_center[2] + POST_POUR_LIFT_MM]
+        move_abs(
+            tilted_pose(home_pose, 0.0, lifted_spout_target, SPOUT_OFFSET_MM),
+            TILT_VEL, TILT_ACC,
+        )
+
+        tp_log("붓기 완료")
+    except Exception as e:
+        tp_log("Robot Error: " + str(e))
+    finally:
+        set_tcp(original_tcp)
+        set_tool(original_tool)
+        tp_log("TCP/Tool 복귀 완료: tcp=" + str(original_tcp) + ", tool=" + str(original_tool))

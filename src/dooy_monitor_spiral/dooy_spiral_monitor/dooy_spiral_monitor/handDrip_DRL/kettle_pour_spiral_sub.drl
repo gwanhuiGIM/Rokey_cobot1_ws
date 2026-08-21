@@ -1,0 +1,225 @@
+# kettle_pour_spiral_sub.drl - Sub Program
+#
+# ⚠️ 새로 설계한 궤적 - 실기 미검증. v3(kettle_circle_pour_v3.py)의 spiral
+# 지오메트리(반지름 0 -> SPIRAL_RADIUS_MM -> 0으로 왕복하며 회전, 진행률에
+# 비례한 추가 기울임)를, v4(kettle_circle_pour_v4.py)의 드리프트 없는
+# 피벗 계산 방식(매 경유점마다 "주둥이가 그 점에 있도록" TCP를 역산)으로
+# 다시 구현했다. v3의 spiral은 SPIRAL_X_DRIFT_MM/SPIRAL_Y_DRIFT_MM 같은
+# 수동 보정 항이 필요했는데, 이는 v3가 쓴 offset 값 자체가 부정확해서
+# 생긴 증상이었지 알고리즘 결함이 아니었다(v3 spiral_point와 v4
+# tilted_pose는 수학적으로 동일: R(a,b,c+extra) == R(a,b,c) @ Rz(extra)).
+# 그래서 이 버전은 그 보정 항 없이, SPOUT_OFFSET_MM만 정확하면 중심 이탈이
+# 없어야 한다는 가설로 만들었다. 반드시 물 없이 저속으로 먼저 검증할 것.
+#
+# kettle_pour_spiral.drl(Task Program)과 같은 프로젝트에 Sub Program으로
+# 등록해야 run_kettle_pour_spiral()을 호출할 수 있다.
+#
+# 전제 조건 (v4.py와 동일)
+#   - 주전자는 이미 그리퍼에 잡혀 바닥과 평행한 상태.
+#   - 주둥이는 필터 중앙 위에 있음(현재 자세를 그대로 앵커로 사용).
+#
+# v4.py와의 차이점
+#   - amovel/amovesx + check_motion 폴링 대신 동기 movel/movesx를 사용한다
+#     (펜던트 직접 실행에는 ROS2 서비스 콜백을 비울 필요가 없다).
+#   - numpy가 없는 컨트롤러 환경이라 3x3 행렬 연산을 직접 구현했다.
+#
+# ⚠️ 실기 첫 테스트 전 확인 사항
+#   - SPOUT_OFFSET_MM이 부정확하면 기울일수록 주둥이가 드리프트한다.
+#     control_GUI의 "검증 TCP 오프셋" + 회전 버튼으로 실측 보정할 것.
+#   - TILT_SIGN: 기울임 방향이 반대면(주둥이가 위로 들리면) 부호를 뒤집을 것.
+#   - 첫 실행은 물 없이 저속으로 궤적만 확인 권장 - 특히 이 파일은 새로
+#     설계한 궤적이라 더욱 필수.
+
+import math
+
+# ===== 로봇/그리퍼 설정 =====
+TOOL_NAME = "Tool Weight_1"
+TCP_NAME = "pot"
+
+# ===== 기하 파라미터 =====
+SPOUT_OFFSET_MM = [0.0, 0.0, 10.0]
+POUR_TILT_DEG = 50.0
+EXTRA_TILT_DEG = 40.0
+TILT_SIGN = -1.0
+# 나선 최대 반지름(mm). 중심(0) -> 이 값 -> 중심(0)으로 왕복한다.
+SPIRAL_RADIUS_MM = 25.0
+# 바깥쪽 확장 구간과 안쪽 복귀 구간 각각에서 도는 회전 수
+# (전체 나선은 2 * SPIRAL_REVS 바퀴, 방향은 안 바뀌고 계속 회전).
+SPIRAL_REVS = 3
+# 나선 반 바퀴(확장 또는 복귀)를 근사하는 경유점 수.
+# 총 경유점 = 2 * SPIRAL_REVS * SPIRAL_STEPS_PER_REV <= movesx 100점 한계.
+SPIRAL_STEPS_PER_REV = 13
+# 붓기 종료 후 원래(수평) 자세로 복귀하기 전, 필터를 피해 BASE Z로
+# 들어올리는 높이(mm).
+POST_POUR_LIFT_MM = 20.0
+
+# ===== 속도/가속도 파라미터 [병진 mm/s|mm/s^2, 회전 deg/s|deg/s^2] =====
+POUR_TILT_VEL = [30.0, 12.0]
+POUR_TILT_ACC = [150.0, 30.0]
+TILT_VEL = [20.0, 8.0]
+TILT_ACC = [100.0, 20.0]
+SPIRAL_VEL = [30.0, 20.0]
+SPIRAL_ACC = [200.0, 60.0]
+
+
+# ===== 순수 3x3 행렬 연산 (컨트롤러에 numpy가 없어 직접 구현) =====
+def _mat3_mul(a, b):
+    result = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    for i in range(3):
+        for j in range(3):
+            s = 0.0
+            for k in range(3):
+                s = s + a[i][k] * b[k][j]
+            result[i][j] = s
+    return result
+
+
+def _mat3_vec_mul(m, v):
+    return [
+        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
+    ]
+
+
+def _rz(deg):
+    rad = math.radians(deg)
+    c = math.cos(rad)
+    s = math.sin(rad)
+    return [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
+
+
+def _ry(deg):
+    rad = math.radians(deg)
+    c = math.cos(rad)
+    s = math.sin(rad)
+    return [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
+
+
+def zyz_to_matrix(a, b, c):
+    """Doosan posx의 ZYZ 오일러 자세를 회전 행렬로 변환한다."""
+    return _mat3_mul(_mat3_mul(_rz(a), _ry(b)), _rz(c))
+
+
+def tilted_pose(home_pose, extra_c_deg, spout_target, spout_offset):
+    """home_pose에 C(툴 로컬 Z) 회전 extra_c_deg를 더하고, 주둥이가
+    spout_target(BASE 좌표)에 오도록 TCP 위치를 역산한 posx를 만든다."""
+    a = home_pose[3]
+    b = home_pose[4]
+    c = home_pose[5]
+    new_c = c + extra_c_deg
+    rotation = zyz_to_matrix(a, b, new_c)
+    offset_base = _mat3_vec_mul(rotation, spout_offset)
+    tcp = [
+        spout_target[0] - offset_base[0],
+        spout_target[1] - offset_base[1],
+        spout_target[2] - offset_base[2],
+    ]
+    return posx([tcp[0], tcp[1], tcp[2], a, b, new_c])
+
+
+def spiral_radius(progress):
+    """전체 진행률(0~1)에서 나선 반지름. 0->0.5 구간은 0 -> SPIRAL_RADIUS_MM
+    로 확장, 0.5->1 구간은 SPIRAL_RADIUS_MM -> 0 으로 복귀한다."""
+    if progress <= 0.5:
+        return SPIRAL_RADIUS_MM * (progress / 0.5)
+    return SPIRAL_RADIUS_MM * ((1.0 - progress) / 0.5)
+
+
+def spiral_spout_target(spout_center, angle_deg, radius_mm):
+    """필터 중앙(spout_center) 기준, BASE 수평면 위 나선 위의 주둥이
+    목표점."""
+    angle_rad = math.radians(angle_deg)
+    return [
+        spout_center[0] + radius_mm * math.cos(angle_rad),
+        spout_center[1] + radius_mm * math.sin(angle_rad),
+        spout_center[2],
+    ]
+
+
+def move_abs(pose, vel, acc):
+    movel(pose, vel=vel, acc=acc, ref=DR_BASE, mod=DR_MV_MOD_ABS)
+
+
+def draw_pour_spiral(home_pose, spout_center):
+    """주둥이가 중심 -> 바깥(SPIRAL_RADIUS_MM) -> 중심 순서로 나선을 그리며
+    (방향은 안 바뀌고 총 2*SPIRAL_REVS바퀴 계속 회전), 진행률에 비례해
+    EXTRA_TILT_DEG를 추가 기울인다. 매 경유점에서 주둥이 목표(나선 위의 점)
+    와 그 시점의 기울임 각도로 TCP를 역산하므로, v3의 오프셋 근사 오차로
+    인한 중심 이탈 없이 정확한 나선을 유지한다."""
+    total_points = 2 * SPIRAL_REVS * SPIRAL_STEPS_PER_REV
+    if total_points > 100:
+        raise ValueError("movesx 경유점 한계(100) 초과 - SPIRAL_REVS/SPIRAL_STEPS_PER_REV를 줄일 것")
+    path = []
+    for index in range(1, total_points + 1):
+        progress = index / total_points
+        angle = 720.0 * SPIRAL_REVS * progress
+        radius = spiral_radius(progress)
+        extra_c = TILT_SIGN * (POUR_TILT_DEG + EXTRA_TILT_DEG * progress)
+        target = spiral_spout_target(spout_center, angle, radius)
+        path.append(tilted_pose(home_pose, extra_c, target, SPOUT_OFFSET_MM))
+    movesx(path, vel=SPIRAL_VEL, acc=SPIRAL_ACC, ref=DR_BASE,
+           mod=DR_MV_MOD_ABS, vel_opt=DR_MVS_VEL_CONST)
+
+
+def run_kettle_pour_spiral():
+    original_tcp = get_tcp()
+    original_tool = get_tool()
+    tp_log("진입 시 TCP/Tool 저장: tcp=" + str(original_tcp) + ", tool=" + str(original_tool))
+
+    try:
+        set_tool(TOOL_NAME)
+        set_tcp(TCP_NAME)
+        set_singularity_handling(DR_AVOID)
+
+        tp_log("1) 현재 자세(수평)에서 주둥이 앵커 계산")
+        home_pose = list(get_current_posx(DR_BASE)[0])
+        home_rotation = zyz_to_matrix(home_pose[3], home_pose[4], home_pose[5])
+        offset_base = _mat3_vec_mul(home_rotation, SPOUT_OFFSET_MM)
+        spout_center = [
+            home_pose[0] + offset_base[0],
+            home_pose[1] + offset_base[1],
+            home_pose[2] + offset_base[2],
+        ]
+
+        tp_log("2) 주둥이 고정한 채 " + str(POUR_TILT_DEG) + "도 기울이기 (물 시작)")
+        move_abs(
+            tilted_pose(home_pose, TILT_SIGN * POUR_TILT_DEG, spout_center, SPOUT_OFFSET_MM),
+            POUR_TILT_VEL, POUR_TILT_ACC,
+        )
+
+        tp_log(
+            "3) 나선 (0 -> " + str(SPIRAL_RADIUS_MM) + "mm -> 0, "
+            + str(SPIRAL_REVS) + "+" + str(SPIRAL_REVS) + "바퀴) + 추가 기울임 "
+            + str(EXTRA_TILT_DEG) + "도"
+        )
+        # 나선은 반지름 0(중심)에서 시작하므로 원(circle)과 달리 별도의
+        # "시작점으로 이동" 구간이 필요 없다.
+        draw_pour_spiral(home_pose, spout_center)
+
+        tp_log("4) 주둥이를 필터 중앙으로 복귀")
+        post_pose = tilted_pose(
+            home_pose, TILT_SIGN * (POUR_TILT_DEG + EXTRA_TILT_DEG),
+            spout_center, SPOUT_OFFSET_MM,
+        )
+        move_abs(post_pose, SPIRAL_VEL, SPIRAL_ACC)
+
+        tp_log("5) 필터 회피: 기울인 자세 그대로 Z+" + str(POST_POUR_LIFT_MM) + "mm 상승")
+        lifted_pose = list(post_pose)
+        lifted_pose[2] = lifted_pose[2] + POST_POUR_LIFT_MM
+        move_abs(posx(lifted_pose), TILT_VEL, TILT_ACC)
+
+        tp_log("6) 상승한 높이에서 수평 자세로 복귀 (물 정지)")
+        lifted_spout_target = [spout_center[0], spout_center[1], spout_center[2] + POST_POUR_LIFT_MM]
+        move_abs(
+            tilted_pose(home_pose, 0.0, lifted_spout_target, SPOUT_OFFSET_MM),
+            TILT_VEL, TILT_ACC,
+        )
+
+        tp_log("붓기 완료")
+    except Exception as e:
+        tp_log("Robot Error: " + str(e))
+    finally:
+        set_tcp(original_tcp)
+        set_tool(original_tool)
+        tp_log("TCP/Tool 복귀 완료: tcp=" + str(original_tcp) + ", tool=" + str(original_tool))

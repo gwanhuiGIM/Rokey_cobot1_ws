@@ -1,0 +1,21 @@
+# kettle_pour_spiral.drl - Task Program (메인 실행 파일)
+#
+# 핸드드립 커피 - 주둥이 고정 피벗 붓기, 나선(반지름 0->최대->0) (m0609)
+# ⚠️ 새로 설계한 궤적으로 실기 미검증 - v3의 spiral 형상을 v4의 드리프트
+# 없는 피벗 계산으로 재구현한 것. 자세한 근거는
+# kettle_pour_spiral_sub.drl 상단 주석 참고.
+#
+# 사용 방법
+#   1) kettle_pour_spiral_sub.drl을 이 프로그램과 같은 프로젝트에
+#      Sub Program으로 추가한다.
+#   2) 주전자를 그리퍼로 잡아 바닥과 평행하게, 주둥이가 필터 중앙 위에
+#      오도록 배치한 상태에서 이 프로그램을 Play한다.
+#
+# 동작: 주둥이 고정 -> 기울이기(물 시작) -> 나선(중심 -> 반지름
+# SPIRAL_RADIUS_MM -> 중심, 총 2*SPIRAL_REVS바퀴, 추가 기울임 포함) ->
+# 중앙 복귀 -> 필터 회피 상승 -> 수평 복귀(물 정지)
+#
+# ⚠️ 첫 실행은 반드시 물 없이 저속으로 궤적만 확인할 것. 파라미터는
+# kettle_pour_spiral_sub.drl 상단을 참고.
+
+run_kettle_pour_spiral()

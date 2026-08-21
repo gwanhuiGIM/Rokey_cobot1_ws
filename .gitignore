@@ -1,0 +1,36 @@
+# colcon 산출물
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# 대용량 — LFS나 DVC로 별도 관리
+*.pt
+*.pth
+*.onnx
+*.engine
+*.usd
+*.usda
+*.bag
+*.db3
+*.mcap
+datasets/
+runs/
+
+# 에디터·OS
+.vscode/
+.idea/
+.DS_Store
+coffee_pipeline_ws/
+
+.agents
+.claude
+.obsidian
+docs/
+
+CLAUDE.md	

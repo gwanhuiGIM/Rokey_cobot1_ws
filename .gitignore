@@ -27,3 +27,8 @@ runs/
 .idea/
 .DS_Store
 coffee_pipeline_ws/
+
+.agents
+.claude
+.obsidian
+/docs	
